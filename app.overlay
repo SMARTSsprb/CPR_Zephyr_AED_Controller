@@ -1,0 +1,72 @@
+/*
+ * app.overlay - Devicetree overlay for CPR External AED Controller
+ * Target: ESP32-C3 Super Mini / esp32c3_devkitm
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+    chosen {
+        zephyr,console = &usb_serial;
+        zephyr,shell-uart = &usb_serial;
+    };
+
+    aliases {
+        aed-shock-btn = &shock_button_node;
+        aed-power-btn = &power_button_node;
+        aed-status-led = &status_led_node;
+        aed-sync-out = &sync_out_node;
+        aed-rgb-red = &rgb_red_node;
+        aed-rgb-green = &rgb_green_node;
+        aed-rgb-blue = &rgb_blue_node;
+    };
+
+    aed_gpio_nodes {
+        compatible = "gpio-keys";
+
+        /* Shock Button: GPIO 9 (Onboard Boot Button or parallel external button) */
+        shock_button_node: shock_btn {
+            gpios = <&gpio0 9 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+            label = "AED Shock Button";
+        };
+
+        /* Power ON/OFF Momentary Button: GPIO 6 (External momentary tactile switch to GND) */
+        power_button_node: power_btn {
+            gpios = <&gpio0 6 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+            label = "AED Power ON/OFF Button";
+        };
+
+        /* Status Indicator LED: GPIO 8 (Onboard blue LED, Active-LOW) */
+        status_led_node: status_led {
+            gpios = <&gpio0 8 GPIO_ACTIVE_LOW>;
+            label = "AED Status LED";
+        };
+
+        /* Hardware Sync Pulse Output: GPIO 7 */
+        sync_out_node: sync_out {
+            gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+            label = "Hardware Sync Pulse Line";
+        };
+
+        /* RGB LED Channels */
+        rgb_red_node: rgb_red {
+            gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
+            label = "AED RGB Red (GPIO 3)";
+        };
+
+        rgb_green_node: rgb_green {
+            gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
+            label = "AED RGB Green (GPIO 4)";
+        };
+
+        rgb_blue_node: rgb_blue {
+            gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;
+            label = "AED RGB Blue (GPIO 5)";
+        };
+    };
+};
+
+&user_button1 {
+    status = "disabled";
+};
+
