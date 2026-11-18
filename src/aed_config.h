@@ -1,8 +1,9 @@
 /**
  * @file    aed_config.h
  * @brief   System & Hardware Configuration for External AED Shock Unit (Zephyr RTOS)
- * @version 2.0.0
+ * @version 2.1.0
  * @note    Protocol: ESP-NOW ONLY (No BLE)
+ *          Visual Feedback Modes, Color Codes & Waveforms match clinical resuscitation rationale.
  */
 
 #pragma once
@@ -11,7 +12,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define AED_FW_VERSION_STR       "2.0.0-ZEPHYR-ESPNOW"
+#define AED_FW_VERSION_STR       "2.1.0-ZEPHYR-ESPNOW"
 #define AED_PROJECT_NAME         "CPR_AED_ESPNOW"
 
 /* =============================================================================
@@ -26,11 +27,12 @@
 
 /* =============================================================================
  * HARDWARE GPIO ASSIGNMENTS (ESP32-C3 Super Mini)
+ * Red: GPIO 3 | Green: GPIO 4 | Blue: GPIO 5 | Sync: GPIO 7 | Shock: GPIO 9
  * ============================================================================= */
 #define HAL_PIN_SHOCK_BUTTON     9   /* Active-LOW Shock Button (Onboard BOOT or External) */
 #define HAL_PIN_POWER_BUTTON     6   /* Optional GPIO 6 logic power pin (if not using Option 1) */
 #define HAL_PIN_STATUS_LED       8   /* Active-LOW Status LED (Onboard Blue LED) */
-#define HAL_PIN_SYNC_OUT         7   /* Hardware Trigger Pulse Line to Manikin (Optional) */
+#define HAL_PIN_SYNC_OUT         7   /* Hardware Trigger Pulse Line to Manikin (1ms sync) */
 
 /* 
  * Power Switch Architecture:
@@ -57,23 +59,30 @@
  * TIMING & OPERATIONAL CONSTANTS (Milliseconds)
  * ============================================================================= */
 #define TIMING_BTN_DEBOUNCE_MS       50    /* Button debounce time */
-#define TIMING_SHOCK_COOLDOWN_MS     11000 /* 11s safety lockout (entire 10s sequence + 1s guard) */
+#define TIMING_SHOCK_COOLDOWN_MS     11000 /* 11s safety lockout (entire sequence + guard) */
 #define TIMING_SYNC_PULSE_MS         1     /* Hardware sync pulse duration (1 ms) */
-#define TIMING_SHOCK_INSTRUCTION_MS  5000  /* 5.0 seconds Yellow (Application instruction / charging) */
-#define TIMING_SHOCK_GIVING_MS       5000  /* 5.0 seconds Red (Active shock delivery) */
-#define TIMING_SHOCK_OFF_LATCH_MS    1000  /* 1.0s solid Green latch on shock completion */
+
+/* MODE 01: WAITING FOR PEER (Deep Blue Breathing: 3.0s organic cycle, 150 steps @ 20ms) */
 #define TIMING_LED_BREATH_TICK_MS    20    /* PWM/Breathing engine tick interval (20ms) */
 #define TIMING_LED_BREATH_STEPS      150   /* 150 steps * 20ms = 3000ms (3.0s organic breath cycle) */
+
+/* MODE 03: SHOCK ON ALERT (Warm Amber/Yellow Triple Strobe Burst) */
+#define TIMING_SHOCK_ALERT_STROBE_MS 60    /* 60ms ON / 60ms OFF */
+#define SHOCK_ALERT_STROBE_CYCLES    3     /* 3 bursts = ~360ms total */
+#define SHOCK_ALERT_TOTAL_BURST_MS   360   /* 60ms * 6 states = 360ms */
+
+/* MODE 04: SHOCK GIVING ARMED (Urgent Red Hazard Strobe: 5 Hz Rhythm) */
+#define TIMING_SHOCK_GIVING_STROBE_MS 100  /* 100ms ON / 100ms OFF (5 Hz / 300 bpm) */
+#define TIMING_SHOCK_GIVING_MS       5000  /* 5.0 seconds active shock delivery */
+
+/* MODE 05: SHOCK OFF DELIVERED (Pure Green 1.0s Confirmation Latch) */
+#define TIMING_SHOCK_OFF_LATCH_MS    1000  /* 1000ms Solid Green pulse before returning to Mode 02 */
 
 /* =============================================================================
  * AED STATE ENUMS & CODES
  * ============================================================================= */
 typedef enum {
-    AED_STATE_DISARMED = 0,   /* Standby / Disarmed */
-    AED_STATE_ARMED    = 1,   /* Armed / Ready for Shock (Blinking Fast) */
-    AED_STATE_SHOCK    = 2    /* Shock Button Pressed / Shock Triggered */
+    AED_STATE_DISARMED = 0,   /* Standby / Peer Active (Mode 02) */
+    AED_STATE_ARMED    = 1,   /* Armed / Alert Stage (Mode 03) */
+    AED_STATE_SHOCK    = 2    /* Delivering Shock (Mode 04) */
 } aed_state_t;
-
-/* ESP-NOW Sync Pulse timing (also used by aed_button_fire_sync_pulse) */
-/* TIMING_SYNC_PULSE_MS is in milliseconds; pass (ms * 1000) for k_busy_wait (µs) */
-

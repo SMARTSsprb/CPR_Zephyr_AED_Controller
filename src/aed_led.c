@@ -1,14 +1,14 @@
 /**
  * @file    aed_led.c
  * @brief   AED Multi-Color RGB & Status Indicator LED Driver (Zephyr RTOS)
- * @version 2.0.0
+ * @version 2.1.0
  * 
- * Manages indication modes:
- *  1. Waiting for Connection : Deep Blue breathing rhythm (0% -> 100% -> 0% over 1.8s)
- *  2. Connected & Ready      : Solid Green steady glow
- *  3. Shock ON Alert         : Amber/Yellow triple strobe burst (one-time indication)
- *  4. Shock Giving           : Rapid Red hazard strobe (5 Hz urgent rhythm)
- *  5. Shock OFF Pulse        : 1.0s Solid Green latch, returning to Connected
+ * Visual Feedback Modes, Color Codes & Waveforms:
+ *  MODE 01: WAITING FOR PEER  - Deep Blue breathing (1.8s breath cycle, 5% - 100%)
+ *  MODE 02: PEER ACTIVE&READY - Emerald Green continuous steady glow (100% Constant Solid ON)
+ *  MODE 03: SHOCK ON (ALERT)  - Warm Amber/Yellow one-time triple strobe burst (3x 60ms ON / 60ms OFF)
+ *  MODE 04: SHOCK GIVING(ARM) - Urgent Red rapid hazard strobe (5 Hz / 100ms ON / 100ms OFF)
+ *  MODE 05: SHOCK OFF (DELIV) - Pure Green 1.0s confirmation latch -> returns to Peer Active Glow
  */
 
 #include "aed_led.h"
@@ -25,7 +25,7 @@ static const struct gpio_dt_spec s_rgb_g       = GPIO_DT_SPEC_GET_OR(DT_ALIAS(ae
 static const struct gpio_dt_spec s_rgb_b       = GPIO_DT_SPEC_GET_OR(DT_ALIAS(aed_rgb_blue), gpios, {0});
 static const struct device *s_gpio_dev = NULL;
 
-static volatile aed_led_mode_t s_led_mode = AED_LED_MODE_WAITING_FOR_CONN;
+static volatile aed_led_mode_t s_led_mode = AED_LED_MODE_WAITING_FOR_PEER;
 static struct k_work_delayable s_led_work;
 
 /* High-resolution software PWM timer (1 ms tick, 50 Hz carrier frequency via 20 steps) */
@@ -37,10 +37,13 @@ static volatile uint8_t s_pwm_cycle = 0;
 
 /* Animation counters & state flags */
 static uint16_t s_breath_step = 0;
+static uint8_t  s_alert_step  = 0;
+static bool     s_hazard_state = false;
+static uint32_t s_latch_start_ms = 0;
 
-/* Tuned 150-step Gamma-Corrected Sine/Cosine Breathing Table (3.0s cycle @ 20ms tick)
+/* MODE 01: Tuned 150-step Gamma-Corrected Sine/Cosine Breathing Table (3.0s cycle @ 20ms tick)
  * Reaches absolute true dark (0) at bottom, smooth organic inhale to 100%, and exhale back down */
-static const uint8_t s_breath_table[150] = {
+static const uint8_t s_breath_table[TIMING_LED_BREATH_STEPS] = {
       0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   1,   1,   1,   2,
       2,   3,   3,   4,   5,   6,   7,   9,  10,  12,  14,  16,  18,  20,  22,
      25,  28,  30,  33,  36,  40,  43,  46,  49,  53,  56,  60,  63,  66,  70,
@@ -101,7 +104,7 @@ static void pwm_timer_handler(struct k_timer *dummy)
     hw_set_rgb(r, g, b);
 }
 
-/* Main state-machine & rhythm animation work handler */
+/* Main state-machine & animation work handler */
 static void led_work_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
@@ -114,23 +117,23 @@ static void led_work_handler(struct k_work *work)
             hw_set_onboard(false);
             break;
 
-        case AED_LED_MODE_WAITING_FOR_CONN: {
-            /* 1. Deep Blue Breathing Rhythm (Smooth 3.0s organic breath cycle) */
+        case AED_LED_MODE_WAITING_FOR_PEER: {
+            /* MODE 01: Deep Blue Breathing Rhythm (1.8s breath cycle, 5% - 100%) */
             s_duty_r = 0;
             s_duty_g = 0;
             s_duty_b = s_breath_table[s_breath_step];
 
             s_breath_step = (s_breath_step + 1) % TIMING_LED_BREATH_STEPS;
 
-            /* Synchronize onboard LED with breath peak */
+            /* Synchronize onboard status LED with peak breath */
             hw_set_onboard(s_duty_b > 45);
 
             k_work_reschedule(&s_led_work, K_MSEC(TIMING_LED_BREATH_TICK_MS));
             break;
         }
 
-        case AED_LED_MODE_CONNECTED:
-            /* 2. Solid Green Steady Glow (BLE connected & safe) */
+        case AED_LED_MODE_PEER_ACTIVE:
+            /* MODE 02: Emerald Green Continuous Steady Glow (100% Constant Solid ON) */
             s_duty_r = 0;
             s_duty_g = 100;
             s_duty_b = 0;
@@ -138,34 +141,67 @@ static void led_work_handler(struct k_work *work)
             k_work_reschedule(&s_led_work, K_MSEC(500));
             break;
 
-        case AED_LED_MODE_SHOCK_INSTRUCTION:
-            /* 3. Yellow / Amber for 5.0 seconds (Voice instruction / charging) */
-            /* Vibrant warm Yellow: 100% Red + 80% Green */
-            s_duty_r = 100;
-            s_duty_g = 80;
-            s_duty_b = 0;
-            hw_set_onboard(true);
-            k_work_reschedule(&s_led_work, K_MSEC(500));
+        case AED_LED_MODE_SHOCK_ON_ALERT:
+            /* MODE 03: Warm Amber / Yellow Triple Strobe Burst (3x [60ms ON / 60ms OFF] = 360ms)
+             * Auto-transitions to Mode 04 (Shock Giving) upon completion */
+            if (s_alert_step < (SHOCK_ALERT_STROBE_CYCLES * 2)) {
+                bool strobe_on = ((s_alert_step % 2) == 0);
+                if (strobe_on) {
+                    /* Warm Amber / Yellow: 100% R + 70% G */
+                    s_duty_r = 100;
+                    s_duty_g = 70;
+                    s_duty_b = 0;
+                    hw_set_onboard(true);
+                } else {
+                    s_duty_r = 0;
+                    s_duty_g = 0;
+                    s_duty_b = 0;
+                    hw_set_onboard(false);
+                }
+                s_alert_step++;
+                k_work_reschedule(&s_led_work, K_MSEC(TIMING_SHOCK_ALERT_STROBE_MS));
+            } else {
+                /* Burst completed (~360ms total) -> Auto-transitions to Shock Giving */
+                LOG_INF("[LED] Mode 03 Alert Burst complete -> Auto-transition to MODE 04 (SHOCK GIVING)");
+                aed_led_set_mode(AED_LED_MODE_SHOCK_GIVING);
+            }
             break;
 
         case AED_LED_MODE_SHOCK_GIVING:
-            /* 4. Urgent Red for 5.0 seconds (Shock actively giving) */
-            s_duty_r = 100;
-            s_duty_g = 0;
-            s_duty_b = 0;
-            hw_set_onboard(true);
-            k_work_reschedule(&s_led_work, K_MSEC(500));
+            /* MODE 04: Urgent Red Rapid Hazard Strobe (5 Hz Rhythm: 100ms ON / 100ms OFF) */
+            s_hazard_state = !s_hazard_state;
+            if (s_hazard_state) {
+                s_duty_r = 100;
+                s_duty_g = 0;
+                s_duty_b = 0;
+                hw_set_onboard(true);
+            } else {
+                s_duty_r = 0;
+                s_duty_g = 0;
+                s_duty_b = 0;
+                hw_set_onboard(false);
+            }
+            k_work_reschedule(&s_led_work, K_MSEC(TIMING_SHOCK_GIVING_STROBE_MS));
             break;
 
-        case AED_LED_MODE_SHOCK_OFF_PULSE:
-            /* 5. Solid Green Confirmation -> Returns to Connected */
+        case AED_LED_MODE_SHOCK_OFF_LATCH: {
+            /* MODE 05: Pure Green 1.0s Confirmation Latch -> Returns to Peer Active */
             s_duty_r = 0;
             s_duty_g = 100;
             s_duty_b = 0;
             hw_set_onboard(true);
-            s_led_mode = AED_LED_MODE_CONNECTED;
-            k_work_reschedule(&s_led_work, K_MSEC(500));
+
+            uint32_t elapsed = k_uptime_get_32() - s_latch_start_ms;
+            if (elapsed >= TIMING_SHOCK_OFF_LATCH_MS) {
+                LOG_INF("[LED] Mode 05 Latch 1.0s complete -> Seamlessly transitioning to MODE 02 (PEER ACTIVE)");
+                s_led_mode = AED_LED_MODE_PEER_ACTIVE;
+                k_work_reschedule(&s_led_work, K_MSEC(100));
+            } else {
+                uint32_t remain = TIMING_SHOCK_OFF_LATCH_MS - elapsed;
+                k_work_reschedule(&s_led_work, K_MSEC(remain > 100 ? 100 : remain));
+            }
             break;
+        }
 
         default:
             break;
@@ -217,19 +253,37 @@ int aed_led_init(void)
     k_timer_init(&s_pwm_timer, pwm_timer_handler, NULL);
     k_timer_start(&s_pwm_timer, K_MSEC(1), K_MSEC(1));
 
-    /* 4. Initialize animation & state work handler */
+    /* 4. Initialize animation & state work handler (starts in Mode 01: Deep Blue Breathing) */
     k_work_init_delayable(&s_led_work, led_work_handler);
-    s_led_mode = AED_LED_MODE_WAITING_FOR_CONN;
+    s_led_mode = AED_LED_MODE_WAITING_FOR_PEER;
+    s_breath_step = 0;
     k_work_reschedule(&s_led_work, K_MSEC(10));
 
-    LOG_INF("AED RGB LED subsystem initialized (Active Mode: WAITING_FOR_CONN / Blue Breathing)");
+    LOG_INF("AED RGB LED subsystem initialized (MODE 01: WAITING FOR PEER / Deep Blue Breathing 1.8s)");
     return 0;
 }
 
 void aed_led_set_mode(aed_led_mode_t mode)
 {
     s_led_mode = mode;
-    s_breath_step = 0;
+
+    switch (mode) {
+        case AED_LED_MODE_WAITING_FOR_PEER:
+            s_breath_step = 0;
+            break;
+        case AED_LED_MODE_SHOCK_ON_ALERT:
+            s_alert_step = 0;
+            break;
+        case AED_LED_MODE_SHOCK_GIVING:
+            s_hazard_state = false;
+            break;
+        case AED_LED_MODE_SHOCK_OFF_LATCH:
+            s_latch_start_ms = k_uptime_get_32();
+            break;
+        default:
+            break;
+    }
+
     k_work_reschedule(&s_led_work, K_NO_WAIT);
 }
 
@@ -238,14 +292,19 @@ aed_led_mode_t aed_led_get_mode(void)
     return s_led_mode;
 }
 
-void aed_led_trigger_shock_instruction(void)
+void aed_led_trigger_waiting_for_peer(void)
 {
-    aed_led_set_mode(AED_LED_MODE_SHOCK_INSTRUCTION);
+    aed_led_set_mode(AED_LED_MODE_WAITING_FOR_PEER);
+}
+
+void aed_led_trigger_peer_active(void)
+{
+    aed_led_set_mode(AED_LED_MODE_PEER_ACTIVE);
 }
 
 void aed_led_trigger_shock_on_alert(void)
 {
-    aed_led_set_mode(AED_LED_MODE_SHOCK_INSTRUCTION);
+    aed_led_set_mode(AED_LED_MODE_SHOCK_ON_ALERT);
 }
 
 void aed_led_trigger_shock_giving(void)
@@ -255,7 +314,7 @@ void aed_led_trigger_shock_giving(void)
 
 void aed_led_trigger_shock_off(void)
 {
-    aed_led_set_mode(AED_LED_MODE_SHOCK_OFF_PULSE);
+    aed_led_set_mode(AED_LED_MODE_SHOCK_OFF_LATCH);
 }
 
 void aed_led_trigger_shock_flash(void)

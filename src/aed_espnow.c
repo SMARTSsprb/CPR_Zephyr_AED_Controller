@@ -30,14 +30,18 @@ static aed_espnow_sent_cb_t  s_sent_cb  = NULL;
 static const uint8_t s_manikin_mac[6] = ESPNOW_MANIKIN_RX_MAC;
 
 /* ─── ESP-NOW send callback (called from Wi-Fi task context) ──────────────── */
-static void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
+static void espnow_send_cb(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
 {
     bool ok = (status == ESP_NOW_SEND_SUCCESS);
 
-    LOG_INF("[ESP-NOW] TX → %02X:%02X:%02X:%02X:%02X:%02X : %s",
-            mac_addr[0], mac_addr[1], mac_addr[2],
-            mac_addr[3], mac_addr[4], mac_addr[5],
-            ok ? "SUCCESS" : "FAILED");
+    if (tx_info && tx_info->des_addr) {
+        LOG_INF("[ESP-NOW] TX -> %02X:%02X:%02X:%02X:%02X:%02X : %s",
+                tx_info->des_addr[0], tx_info->des_addr[1], tx_info->des_addr[2],
+                tx_info->des_addr[3], tx_info->des_addr[4], tx_info->des_addr[5],
+                ok ? "SUCCESS" : "FAILED");
+    } else {
+        LOG_INF("[ESP-NOW] TX : %s", ok ? "SUCCESS" : "FAILED");
+    }
 
     if (s_sent_cb) {
         s_sent_cb(ok);
@@ -90,7 +94,7 @@ int aed_espnow_init(aed_espnow_sent_cb_t sent_cb)
 
     /* 2. Set Wi-Fi to STA mode (required for ESP-NOW) */
     wifi_config_t wifi_config = {0};
-    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_err_t err = esp_wifi_set_mode(ESP32_WIFI_MODE_STA);
     if (err != ESP_OK) {
         LOG_ERR("esp_wifi_set_mode(STA) failed: 0x%x", err);
         return -EIO;
