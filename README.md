@@ -6,7 +6,7 @@ Ultra-low-latency, deterministic external AED Shock Unit firmware running on **Z
 
 ## 1. System Overview & BLE Architecture
 
-The external AED unit simulates clinical defibrillator workflows for CPR training. It operates exclusively using **Bluetooth Low Energy (BLE)** in a dedicated Peripheral / Broadcaster topology designed for multi-AED environments:
+The external AED unit simulates clinical defibrillator workflows for CPR training. It operates exclusively using **Bluetooth Low Energy (BLE)** in a dedicated Peripheral / Broadcaster topology designed for multi-AED training environments:
 
 ```
                       ┌─────────────────────────┐
@@ -15,7 +15,7 @@ The external AED unit simulates clinical defibrillator workflows for CPR trainin
                       └────────────┬────────────┘
                                    │
               Discovers Broadcast  │  Assigns AED_001
-              (No Direct Pairing)  │  to Manikin
+              (No Direct Pairing)  │  to Manikin via '@'
                                    ▼
 ┌─────────────────────────┐   BLE Link    ┌─────────────────────────┐
 │     AED Controller      │ ◄───────────► │       CPR Manikin       │
@@ -25,11 +25,11 @@ The external AED unit simulates clinical defibrillator workflows for CPR trainin
 ```
 
 ### Key Architectural Rules:
-1. **Zero Data Transmission between AED & Application:** The AED only emits advertising packets (`AED_001` with Manufacturer Data telemetry). The Application passively scans and discovers available AEDs.
-2. **No Pairing between AED & Application:** The mobile/tablet application never pairs or bonds directly with the AED unit.
-3. **Application Manikin-AED Assignment:** In the Application UI, the user selects and assigns an AED to a specific Manikin.
-4. **Manikin-to-AED Pairing:** Once assigned, the CPR Manikin connects to the AED over BLE as a Central device.
-5. **Deterministic Shock Execution:** Upon connection, the AED transitions from Mode 01 (Blue Breathing) to Mode 02 (Solid Green). Shock commands (`SHOCK_ON` / `SHOCK_OFF`) are exchanged between Manikin and AED with sub-millisecond hardware trigger output.
+1. **Zero Data Transmission between AED & Application:** The AED only emits advertising packets (`AED_001` with Manufacturer Data telemetry). The Application passively scans and discovers available AEDs without pairing or bonding.
+2. **Application Manikin-AED Assignment:** In the Application UI, the user selects and assigns an AED to a specific Manikin using the `@` protocol (`@LIST`, `@SET:<TOKEN>`).
+3. **Manikin-to-AED Pairing:** Once assigned, the CPR Manikin connects to the AED over BLE as a Central device and escalates security to `BT_SECURITY_L2`.
+4. **Deterministic Visual Feedback:** Upon connection, the AED transitions from Mode 01 (Deep Blue Breathing) to Mode 02 (Solid Emerald Green).
+5. **Shock Execution:** Triggered via physical shock button (GPIO 9) or via Manikin BLE write (`SHOCK_ON` / `'E'` / `'K1'`), firing a 1 ms hardware synchronization pulse on GPIO 7.
 
 ---
 
@@ -82,7 +82,7 @@ The AED unit provides intuitive visual feedback using a high-visibility RGB LED 
 ### Advertising Data Structure
 * **Device Complete Name:** `"AED_001"` (Configurable in `aed_config.h` / `prj.conf`)
 * **Manufacturer Specific Data (3 bytes):**
-  * `Byte 0-1`: Company ID `0xC9C4`
+  * `Byte 0-1`: Company ID `0xC9C4` (Little-Endian: `0xC4`, `0xC9`)
   * `Byte 2`: State Code:
     * `0x00`: **Available / Idle** (Mode 01 - Waiting for Manikin)
     * `0x01`: **Paired / Active** (Mode 02 - Manikin Connected)
@@ -91,11 +91,13 @@ The AED unit provides intuitive visual feedback using a high-visibility RGB LED 
 ### Nordic UART Service (NUS) GATT Characteristics
 * **Service UUID:** `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
 * **RX Characteristic (Write Without Response):** `6E400002-B5A3-F393-E0A9-E50E24DCCA9E`
-  * Manikin sends `'E'`, `'K1'`, or `"SHOCK_ON"` $\rightarrow$ initiates shock sequence.
-  * Manikin sends `'D'`, `'K0'`, or `"SHOCK_OFF"` $\rightarrow$ disarms / completes shock sequence.
-  * Manikin sends `'A1'` or `"AED_ON"` $\rightarrow$ wakes / enables AED controller.
-  * Manikin sends `'A0'` or `"AED_OFF"` $\rightarrow$ puts AED controller to sleep.
-* **TX Characteristic (Notify):** `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` (Reserved for AED status telemetry).
+  * Accepts `'E'`, `'K1'`, or `"SHOCK_ON"` $\rightarrow$ initiates shock sequence.
+  * Accepts `'D'`, `'K0'`, or `"SHOCK_OFF"` $\rightarrow$ disarms / completes shock sequence.
+  * Accepts `'A1'` or `"AED_ON"` $\rightarrow$ wakes / enables AED controller.
+  * Accepts `'A0'` or `"AED_OFF"` $\rightarrow$ puts AED controller to sleep.
+* **TX Characteristic (Notify):** `6E400003-B5A3-F393-E0A9-E50E24DCCA9E`
+  * Streams 5-byte companion frames: `[0xAE, 0x01, <event>, <seq_lo>, <seq_hi>]`
+  * Events: `0x00` (`AED_HELLO`), `0x01` (`AED_POWER_OFF`), `0x02` (`AED_POWER_ON`), `0x03` (`AED_SIM_DELIVERED`).
 
 ---
 
@@ -155,4 +157,4 @@ CPR_Zephyr_AED_Controller/
 
 ## 7. Related Firmware
 
-- **CPR Manikin MCU (Zephyr RTOS):** [SMARTSsprb/CPR_BLE_Zephyr_Controller_No_LED](https://github.com/SMARTSsprb/CPR_BLE_Zephyr_Controller_No_LED)
+* **CPR Manikin MCU (Zephyr RTOS):** [SMARTSsprb/CPR_BLE_Zephyr_Controller_No_LED](https://github.com/SMARTSsprb/CPR_BLE_Zephyr_Controller_No_LED)
