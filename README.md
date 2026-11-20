@@ -6,6 +6,8 @@ Ultra-low-latency, deterministic external AED Shock Unit firmware running on **Z
 
 ## 1. System Overview & BLE Architecture
 
+![CPR Training Ecosystem — Overall System & AED Flow](aed_overall_system_flow.png)
+
 The external AED unit simulates clinical defibrillator workflows for CPR training. It operates exclusively using **Bluetooth Low Energy (BLE)** in a dedicated Peripheral / Broadcaster topology designed for multi-AED training environments:
 
 ```
