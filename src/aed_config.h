@@ -1,9 +1,10 @@
 /**
  * @file    aed_config.h
  * @brief   System & Hardware Configuration for External AED Shock Unit (Zephyr RTOS)
- * @version 2.1.0
- * @note    Protocol: ESP-NOW ONLY (No BLE)
- *          Visual Feedback Modes, Color Codes & Waveforms match clinical resuscitation rationale.
+ * @version 3.0.0
+ * @note    Protocol: BLE PERIPHERAL ONLY
+ *          AED advertises as "AED_001". Manikin (Central) connects and sends SHOCK_ON/OFF.
+ *          Application (mobile) only reads BLE advertisements — no pairing with App.
  */
 
 #pragma once
@@ -12,18 +13,25 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define AED_FW_VERSION_STR       "2.1.0-ZEPHYR-ESPNOW"
-#define AED_PROJECT_NAME         "CPR_AED_ESPNOW"
+#define AED_FW_VERSION_STR       "3.0.0-ZEPHYR-BLE"
+#define AED_PROJECT_NAME         "CPR_AED_BLE"
 
 /* =============================================================================
- * ESP-NOW TARGET PEER CONFIGURATION (Receiver / Manikin MCU Address)
+ * BLE CONFIGURATION
  * -----------------------------------------------------------------------------
- * Target Manikin MCU MAC Addresses:
- *   - Wi-Fi STA MAC (ESP-NOW): E8:3D:C1:82:1B:F0 -> { 0xE8, 0x3D, 0xC1, 0x82, 0x1B, 0xF0 }
- *   - Bluetooth LE MAC:        E8:3D:C1:82:1B:F2
+ * AED advertises under this name. App scans and assigns one AED to one Manikin.
+ * Manikin then connects to this AED as Central. App never connects to AED.
  * ============================================================================= */
-#define ESPNOW_MANIKIN_RX_MAC    { 0xE8, 0x3D, 0xC1, 0x82, 0x1B, 0xF0 }  /* Manikin MCU Wi-Fi STA MAC */
-#define ESPNOW_WIFI_CHANNEL      1                                       /* 2.4 GHz Wi-Fi Channel (1 - 13) */
+#define AED_BLE_DEVICE_NAME      "AED_001"          /* Matches CONFIG_BT_DEVICE_NAME in prj.conf */
+#define AED_BLE_MFG_COMPANY_ID   0xC9C4             /* SMARTS manufacturer ID (little-endian) */
+
+/* Manufacturer data state codes embedded in advertisement */
+#define AED_BLE_STATE_AVAILABLE  0x00   /* Idle — waiting for Manikin to connect */
+#define AED_BLE_STATE_PAIRED     0x01   /* Manikin connected */
+#define AED_BLE_STATE_SHOCK      0x02   /* Shock sequence in progress */
+
+/* Manikin BLE MAC (informational reference — Manikin initiates connection to AED) */
+#define AED_MANIKIN_BLE_MAC      "E8:3D:C1:82:1B:F2"
 
 /* =============================================================================
  * HARDWARE GPIO ASSIGNMENTS (ESP32-C3 Super Mini)
@@ -62,21 +70,19 @@
 #define TIMING_SHOCK_COOLDOWN_MS     11000 /* 11s safety lockout (entire sequence + guard) */
 #define TIMING_SYNC_PULSE_MS         1     /* Hardware sync pulse duration (1 ms) */
 
-/* MODE 01: WAITING FOR PEER (Deep Blue Breathing: 3.0s organic cycle, 150 steps @ 20ms) */
+/* MODE 01: WAITING FOR PEER / STANDBY (Deep Blue Breathing: 3.0s organic cycle, 150 steps @ 20ms) */
 #define TIMING_LED_BREATH_TICK_MS    20    /* PWM/Breathing engine tick interval (20ms) */
 #define TIMING_LED_BREATH_STEPS      150   /* 150 steps * 20ms = 3000ms (3.0s organic breath cycle) */
 
-/* MODE 03: SHOCK ON ALERT (Warm Amber/Yellow Triple Strobe Burst) */
-#define TIMING_SHOCK_ALERT_STROBE_MS 60    /* 60ms ON / 60ms OFF */
-#define SHOCK_ALERT_STROBE_CYCLES    3     /* 3 bursts = ~360ms total */
-#define SHOCK_ALERT_TOTAL_BURST_MS   360   /* 60ms * 6 states = 360ms */
-
-/* MODE 04: SHOCK GIVING ARMED (Urgent Red Hazard Strobe: 5 Hz Rhythm) */
-#define TIMING_SHOCK_GIVING_STROBE_MS 100  /* 100ms ON / 100ms OFF (5 Hz / 300 bpm) */
-#define TIMING_SHOCK_GIVING_MS       5000  /* 5.0 seconds active shock delivery */
-
-/* MODE 05: SHOCK OFF DELIVERED (Pure Green 1.0s Confirmation Latch) */
-#define TIMING_SHOCK_OFF_LATCH_MS    1000  /* 1000ms Solid Green pulse before returning to Mode 02 */
+/* SHOCK SEQUENCE TIMINGS:
+ * Stage 1: Yellow / Amber (Application instruction / charging) for 5.0 seconds
+ * Stage 2: Red (Active shock delivery + 1ms sync pulse) for 5.0 seconds
+ * Stage 3: Returns to Solid Green (Safe / shock complete)
+ */
+#define TIMING_SHOCK_INSTRUCTION_MS  5000  /* 5.0 seconds Yellow (Instruction giving from application) */
+#define TIMING_SHOCK_GIVING_MS       5000  /* 5.0 seconds Red (Shock giving) */
+#define TIMING_SHOCK_OFF_LATCH_MS    1000  /* 1.0s solid green latch */
+#define TIMING_SHOCK_GIVING_STROBE_MS 100  /* 100ms ON / 100ms OFF (5 Hz urgent strobe) */
 
 /* =============================================================================
  * AED STATE ENUMS & CODES

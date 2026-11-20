@@ -1,20 +1,35 @@
 # CPR External AED Shock Controller
 
-Ultra-low-latency, deterministic external AED Shock Unit firmware running on **Zephyr RTOS v4.x** (with companion Arduino sketch) for the **ESP32-C3 Super Mini**.
+Ultra-low-latency, deterministic external AED Shock Unit firmware running on **Zephyr RTOS v4.x** for the **ESP32-C3 Super Mini**.
 
 ---
 
-## 1. System Overview
+## 1. System Overview & BLE Architecture
 
-The external AED unit simulates clinical defibrillator workflows for CPR training. It communicates wirelessly with the **CPR Manikin MCU** (`CPR_BLE_Prototype_c3`) exclusively via the **ESP-NOW protocol** (2.4 GHz raw RF frames) for sub-millisecond deterministic latency.
+The external AED unit simulates clinical defibrillator workflows for CPR training. It operates exclusively using **Bluetooth Low Energy (BLE)** in a dedicated Peripheral / Broadcaster topology designed for multi-AED environments:
 
 ```
-┌─────────────────────────────────┐   ESP-NOW (2.4 GHz)   ┌─────────────────────────────────┐
-│     AED Shock Controller        │ ────────────────────► │          CPR Manikin            │
-│   ESP32-C3 Super Mini (Zephyr)  │   Direct MAC Frame    │   ESP32-C3 Super Mini (Zephyr)  │
-│   MAC: Dynamic STA MAC          │                       │   MAC: E8:3D:C1:82:1B:F0        │
-└─────────────────────────────────┘                       └─────────────────────────────────┘
+                      ┌─────────────────────────┐
+                      │    Mobile Application   │
+                      │     (Tablet / Phone)    │
+                      └────────────┬────────────┘
+                                   │
+              Discovers Broadcast  │  Assigns AED_001
+              (No Direct Pairing)  │  to Manikin
+                                   ▼
+┌─────────────────────────┐   BLE Link    ┌─────────────────────────┐
+│     AED Controller      │ ◄───────────► │       CPR Manikin       │
+│  (BLE Peripheral / Adv) │ (NUS Service) │ (BLE Central for AED,   │
+│   Device: "AED_001"     │               │  Peripheral for App)    │
+└─────────────────────────┘               └─────────────────────────┘
 ```
+
+### Key Architectural Rules:
+1. **Zero Data Transmission between AED & Application:** The AED only emits advertising packets (`AED_001` with Manufacturer Data telemetry). The Application passively scans and discovers available AEDs.
+2. **No Pairing between AED & Application:** The mobile/tablet application never pairs or bonds directly with the AED unit.
+3. **Application Manikin-AED Assignment:** In the Application UI, the user selects and assigns an AED to a specific Manikin.
+4. **Manikin-to-AED Pairing:** Once assigned, the CPR Manikin connects to the AED over BLE as a Central device.
+5. **Deterministic Shock Execution:** Upon connection, the AED transitions from Mode 01 (Blue Breathing) to Mode 02 (Solid Green). Shock commands (`SHOCK_ON` / `SHOCK_OFF`) are exchanged between Manikin and AED with sub-millisecond hardware trigger output.
 
 ---
 
@@ -23,25 +38,25 @@ The external AED unit simulates clinical defibrillator workflows for CPR trainin
 The AED unit provides intuitive visual feedback using a high-visibility RGB LED indicator matching the clinical resuscitation rationale:
 
 ```
-[Mode 01: Waiting]  ──(Peer Registered)──►  [Mode 02: Peer Active]
-   (Deep Blue)                                 (Emerald Green)
-                                                     │
-                                             (Button Pressed)
-                                                     │
-                                                     ▼
-                                            [Mode 03: Alert Burst] (Amber Triple Strobe)
-                                                     │ (~360ms auto-transition)
-                                                     ▼
-                                            [Mode 04: Shock Giving] (Red 5 Hz Hazard 5s)
-                                                     │ (1ms Sync Pulse on GPIO 7)
-                                                     ▼
-[Mode 02: Peer Active]  ◄──(1.0s Latch)───  [Mode 05: Shock Off] (Pure Green Latch)
+[Mode 01: Waiting]  ──(Manikin Connected)──►  [Mode 02: Peer Active]
+   (Deep Blue)                                   (Emerald Green)
+                                                        │
+                                                (Button Pressed)
+                                                        │
+                                                        ▼
+                                               [Mode 03: Alert Burst] (Amber Triple Strobe)
+                                                        │ (~360ms auto-transition)
+                                                        ▼
+                                               [Mode 04: Shock Giving] (Red 5 Hz Hazard 5s)
+                                                        │ (1ms Sync Pulse on GPIO 7)
+                                                        ▼
+[Mode 02: Peer Active]  ◄──(1.0s Latch)─────  [Mode 05: Shock Off] (Pure Green Latch)
 ```
 
 | Mode | Visual Feedback | Color & Channel | Pattern & Timing | Clinical Meaning / Resuscitation Rationale |
 | :---: | :--- | :--- | :--- | :--- |
-| **01** | **WAITING FOR PEER** | 🔵 **Deep Blue** | **Smooth Breathing Rhythm**<br>150-step organic curve (0% $\rightarrow$ 100% $\rightarrow$ 0% over 3.0s @ 20ms tick) | **Alive & Seeking Peer:** System booted; looking for Manikin receiver over ESP-NOW. |
-| **02** | **PEER ACTIVE & READY** | 🟢 **Emerald Green** | **Continuous Steady Glow**<br>100% Constant Solid ON | **Safe Standby & Telemetry Synced:** Peer registered; zero visual distraction while preparing scenario. |
+| **01** | **WAITING FOR PEER** | 🔵 **Deep Blue** | **Smooth Breathing Rhythm**<br>150-step organic curve (0% $\rightarrow$ 100% $\rightarrow$ 0% over 3.0s @ 20ms tick) | **Alive & Seeking Peer:** System booted; advertising `AED_001` and awaiting Manikin connection. |
+| **02** | **PEER ACTIVE & READY** | 🟢 **Emerald Green** | **Continuous Steady Glow**<br>100% Constant Solid ON | **Safe Standby & Telemetry Synced:** Manikin connected; zero visual distraction while preparing scenario. |
 | **03** | **SHOCK ON (ALERT)** | 🟡 **Warm Amber** | **One-Time Triple Strobe Burst**<br>3x [60ms ON / 60ms OFF] (~360ms total burst) | **Shock Advised:** Capacitors charging; automatically transitions to Mode 04 upon burst completion. |
 | **04** | **SHOCK GIVING (ARMED)** | 🔴 **Urgent Red** | **Rapid Hazard Strobe**<br>5 Hz cadence (100ms ON / 100ms OFF) for 5.0 seconds | **High-Voltage Hazard:** *"STAND CLEAR — DELIVERING SHOCK!"* Fires **1ms hardware sync pulse** on GPIO 7. |
 | **05** | **SHOCK OFF (DELIVERED)** | 🟢 **Pure Green** | **1.0s Confirmation Latch**<br>1000ms Solid Green, then seamlessly returns to Mode 02 | **Energy Safely Discharged:** Safe to touch patient — resume CPR compressions. |
@@ -62,30 +77,25 @@ The AED unit provides intuitive visual feedback using a high-visibility RGB LED 
 
 ---
 
-## 4. ESP-NOW Wireless Telemetry Protocol
+## 4. BLE Wireless Protocol & Advertising Telemetry
 
-### Packet Structure (Packed C Struct)
+### Advertising Data Structure
+* **Device Complete Name:** `"AED_001"` (Configurable in `aed_config.h` / `prj.conf`)
+* **Manufacturer Specific Data (3 bytes):**
+  * `Byte 0-1`: Company ID `0xC9C4`
+  * `Byte 2`: State Code:
+    * `0x00`: **Available / Idle** (Mode 01 - Waiting for Manikin)
+    * `0x01`: **Paired / Active** (Mode 02 - Manikin Connected)
+    * `0x02`: **Shock Active** (Mode 03 / 04 - Delivering Shock)
 
-```c
-typedef struct __attribute__((packed)) {
-    uint8_t  cmd;    /* 0=AED_OFF, 1=AED_ON, 2=SHOCK_ON, 3=SHOCK_OFF */
-    uint8_t  stage;  /* 0=idle, 1=alert burst, 2=delivering (5s), 3=complete */
-    uint32_t ts;     /* Millisecond timestamp (k_uptime_get_32 / millis) */
-} aed_espnow_pkt_t;
-```
-
-### Command Sequence
-
-| Command | `cmd` | `stage` | Timing / Trigger | Action |
-| :--- | :---: | :---: | :--- | :--- |
-| **`AED_ON`** | `1` | `0` | On power-on / boot | Registers peer and transitions LED to **Mode 02 (Solid Green)** |
-| **`SHOCK_ON` (Alert)** | `2` | `1` | Shock Button Pressed | Initiates Mode 03 Warm Amber Triple Strobe (~360ms) |
-| **`SHOCK_ON` (Delivering)**| `2` | `2` | Auto-transition (+360ms) | Fires 1ms sync pulse on GPIO 7 and runs 5 Hz Red Strobe for 5.0s |
-| **`SHOCK_OFF` (Complete)** | `3` | `3` | Delivery finished (+5.0s) | Initiates Mode 05 Pure Green 1.0s latch, then returns to Mode 02 |
-| **`AED_OFF`** | `0` | `0` | On power switch OFF | Unit powered down; LED turned off |
-
-* **Target Manikin Wi-Fi STA MAC:** `E8:3D:C1:82:1B:F0`
-* **Wi-Fi Channel:** Channel 1 (2.4 GHz)
+### Nordic UART Service (NUS) GATT Characteristics
+* **Service UUID:** `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
+* **RX Characteristic (Write Without Response):** `6E400002-B5A3-F393-E0A9-E50E24DCCA9E`
+  * Manikin sends `'E'`, `'K1'`, or `"SHOCK_ON"` $\rightarrow$ initiates shock sequence.
+  * Manikin sends `'D'`, `'K0'`, or `"SHOCK_OFF"` $\rightarrow$ disarms / completes shock sequence.
+  * Manikin sends `'A1'` or `"AED_ON"` $\rightarrow$ wakes / enables AED controller.
+  * Manikin sends `'A0'` or `"AED_OFF"` $\rightarrow$ puts AED controller to sleep.
+* **TX Characteristic (Notify):** `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` (Reserved for AED status telemetry).
 
 ---
 
@@ -104,8 +114,11 @@ python -m esptool --chip esp32c3 --port COM8 --baud 921600 write_flash 0x0 bin/z
 Requirements: Zephyr SDK, CMake, Ninja, and Python 3.
 
 ```powershell
-# 1. Configure CMake with devicetree overlay
-cmake -G Ninja -B build -S . -DBOARD=esp32c3_devkitm
+# 1. Configure CMake with Zephyr environment
+$env:ZEPHYR_BASE="C:\zephyrproject\zephyr"
+$env:ZEPHYR_TOOLCHAIN_VARIANT="zephyr"
+$env:ZEPHYR_SDK_INSTALL_DIR="C:\zephyr-sdk-1.0.1"
+cmake -G Ninja -B build -S . -DBOARD=esp32c3_devkitm -DCMAKE_C_FLAGS="-BC:/zb/as_bin/ -fno-lto -fno-use-linker-plugin"
 
 # 2. Compile application and link zephyr.elf
 ninja -C build zephyr/zephyr.elf
@@ -117,14 +130,6 @@ python -m esptool --chip esp32c3 elf2image --ram-only-header --flash-mode dio --
 python -m esptool --chip esp32c3 --port COM8 --baud 921600 write_flash 0x0 bin/zephyr.bin
 ```
 
-### Option C: Arduino IDE Firmware
-
-The repository also includes the Arduino-compatible implementation located in [`CPR_AED_ESP_NOW/`](CPR_AED_ESP_NOW/):
-
-1. Open `CPR_AED_ESP_NOW/CPR_AED_ESP_NOW.ino` in Arduino IDE.
-2. Select Board: **ESP32C3 Dev Module**.
-3. Flash with settings outlined in [`ARDUINO_BOARD_SETTINGS.md`](CPR_AED_ESP_NOW/ARDUINO_BOARD_SETTINGS.md).
-
 ---
 
 ## 6. Repository Layout
@@ -132,19 +137,16 @@ The repository also includes the Arduino-compatible implementation located in [`
 ```
 CPR_Zephyr_AED_Controller/
 ├── bin/
-│   └── zephyr.bin                 ← Verified precompiled Zephyr binary (544 KB)
+│   └── zephyr.bin                 ← Verified precompiled Zephyr BLE binary (433 KB)
 ├── src/
 │   ├── main.c                     ← Application entry point & state machine
-│   ├── aed_config.h               ← Pinout, timing & protocol definitions
+│   ├── aed_config.h               ← Pinout, timing & BLE protocol definitions
 │   ├── aed_led.c / .h             ← 5-Mode RGB LED state machine & PWM driver
 │   ├── aed_button.c / .h          ← Shock button debounce & sync pulse driver
-│   └── aed_espnow.c / .h          ← ESP-NOW wireless transmitter subsystem
-├── CPR_AED_ESP_NOW/
-│   ├── CPR_AED_ESP_NOW.ino        ← Arduino firmware (100% parity with Zephyr)
-│   └── ARDUINO_BOARD_SETTINGS.md  ← Arduino IDE configuration guide
+│   └── aed_ble.c / .h             ← BLE Peripheral & NUS GATT service subsystem
 ├── app.overlay                    ← Devicetree overlay for ESP32-C3 Super Mini
 ├── CMakeLists.txt                 ← Zephyr build definition
-├── prj.conf                       ← Zephyr kernel & Wi-Fi configuration
+├── prj.conf                       ← Zephyr kernel & BLE stack configuration
 ├── aed_rgb_led_indications.png    ← Clinical visual feedback timing diagram
 └── README.md                      ← Documentation
 ```

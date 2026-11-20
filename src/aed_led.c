@@ -142,33 +142,18 @@ static void led_work_handler(struct k_work *work)
             break;
 
         case AED_LED_MODE_SHOCK_ON_ALERT:
-            /* MODE 03: Warm Amber / Yellow Triple Strobe Burst (3x [60ms ON / 60ms OFF] = 360ms)
-             * Auto-transitions to Mode 04 (Shock Giving) upon completion */
-            if (s_alert_step < (SHOCK_ALERT_STROBE_CYCLES * 2)) {
-                bool strobe_on = ((s_alert_step % 2) == 0);
-                if (strobe_on) {
-                    /* Warm Amber / Yellow: 100% R + 70% G */
-                    s_duty_r = 100;
-                    s_duty_g = 70;
-                    s_duty_b = 0;
-                    hw_set_onboard(true);
-                } else {
-                    s_duty_r = 0;
-                    s_duty_g = 0;
-                    s_duty_b = 0;
-                    hw_set_onboard(false);
-                }
-                s_alert_step++;
-                k_work_reschedule(&s_led_work, K_MSEC(TIMING_SHOCK_ALERT_STROBE_MS));
-            } else {
-                /* Burst completed (~360ms total) -> Auto-transitions to Shock Giving */
-                LOG_INF("[LED] Mode 03 Alert Burst complete -> Auto-transition to MODE 04 (SHOCK GIVING)");
-                aed_led_set_mode(AED_LED_MODE_SHOCK_GIVING);
-            }
+            /* Stage 1: Warm Amber / Yellow for 5.0 seconds (Instruction giving from application / charging) */
+            /* Vibrant Yellow: 100% Red + 80% Green, 0% Blue */
+            s_duty_r = 100;
+            s_duty_g = 80;
+            s_duty_b = 0;
+            hw_set_onboard(true);
+            k_work_reschedule(&s_led_work, K_MSEC(500));
             break;
 
         case AED_LED_MODE_SHOCK_GIVING:
-            /* MODE 04: Urgent Red Rapid Hazard Strobe (5 Hz Rhythm: 100ms ON / 100ms OFF) */
+            /* Stage 2: Urgent Red for 5.0 seconds (Shock actively giving) */
+            /* Urgent Red rapid hazard strobe (5 Hz / 100ms ON / 100ms OFF) */
             s_hazard_state = !s_hazard_state;
             if (s_hazard_state) {
                 s_duty_r = 100;
@@ -184,24 +169,15 @@ static void led_work_handler(struct k_work *work)
             k_work_reschedule(&s_led_work, K_MSEC(TIMING_SHOCK_GIVING_STROBE_MS));
             break;
 
-        case AED_LED_MODE_SHOCK_OFF_LATCH: {
-            /* MODE 05: Pure Green 1.0s Confirmation Latch -> Returns to Peer Active */
+        case AED_LED_MODE_SHOCK_OFF_LATCH:
+            /* Stage 3: Turns to Solid Green (Safe to touch patient / resume CPR) */
             s_duty_r = 0;
             s_duty_g = 100;
             s_duty_b = 0;
             hw_set_onboard(true);
-
-            uint32_t elapsed = k_uptime_get_32() - s_latch_start_ms;
-            if (elapsed >= TIMING_SHOCK_OFF_LATCH_MS) {
-                LOG_INF("[LED] Mode 05 Latch 1.0s complete -> Seamlessly transitioning to MODE 02 (PEER ACTIVE)");
-                s_led_mode = AED_LED_MODE_PEER_ACTIVE;
-                k_work_reschedule(&s_led_work, K_MSEC(100));
-            } else {
-                uint32_t remain = TIMING_SHOCK_OFF_LATCH_MS - elapsed;
-                k_work_reschedule(&s_led_work, K_MSEC(remain > 100 ? 100 : remain));
-            }
+            s_led_mode = AED_LED_MODE_PEER_ACTIVE;
+            k_work_reschedule(&s_led_work, K_MSEC(500));
             break;
-        }
 
         default:
             break;
