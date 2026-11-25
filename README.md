@@ -34,18 +34,18 @@ The App decides when the shock button may be used: it checks the pads on the Man
 | Step | Trigger | `power` | `shock` | LED |
 | :---: | :--- | :---: | :---: | :--- |
 | 0 | App connected | 0 | 0 | off (blue breathing while no App) |
-| 1 | App sends **`P1`** | 1 (waiting for press) | 0 | off |
-| 2 | User presses the **power button** | 2 (on) | 0 | solid yellow |
-| 3 | App checks the pads, sends **`S1`** | 2 | 1 (waiting for press) | solid yellow |
-| 4 | User presses the **shock button** | 2 | 2 (in progress) | yellow 5 s, then red strobe 5 s (+ 1 ms sync pulse on GPIO 7) |
-| 5 | Sequence ends | 2 | 3 (delivered) | solid green |
-| 6 | App sends **`P0`** | 0 | 0 | off |
+| 1 | App sends **`P1`** | 2 (on) | 0 | solid yellow |
+| 2 | App checks the pads, sends **`S1`** | 2 | 1 (waiting for press) | solid yellow |
+| 3 | User presses the **shock button** | 2 | 2 (in progress) | yellow 5 s, then red strobe 5 s (+ 1 ms sync pulse on GPIO 7) |
+| 4 | Sequence ends | 2 | 3 (delivered) | solid green |
+| 5 | App sends **`P0`** | 0 | 0 | off |
 
 Rules:
+* `P1` turns the AED power directly ON (state 2, solid yellow LED).
 * `S1` is accepted only when `power = 2`; otherwise it is ignored and the current state is sent again.
 * `S0` disables the shock button (only while `shock = 1`).
 * `P0` forces power 0 and shock 0 from any state and stops a running sequence.
-* Pressing the power button again while `power = 2` (and no shock running) turns the AED off (0 / 0).
+* **GPIO 6 (Monitor only):** acts as a non-intrusive sensor/trigger monitor. When triggered, it emits event `0x0B` to inform the App and logs without resetting the system state.
 * **Fail-safe:** if the App link is lost, the AED returns to power 0, shock 0.
 
 ---
@@ -108,7 +108,7 @@ Bond storage needs the board's `storage_partition` (flash). If the build complai
 | Pin | Function | Description |
 | :--- | :--- | :--- |
 | **GPIO 9** | Shock button | Active-LOW momentary button, works only when `shock = 1` |
-| **GPIO 6** | Power button | Active-LOW **momentary** button, works only when `power = 1` (or to switch off when `power = 2`) |
+| **GPIO 6** | Monitor / Trigger | Active-LOW **monitor** input; emits event `0x0B` when triggered without resetting state |
 | **GPIO 7** | Sync pulse out | 1 ms pulse at the start of the red stage |
 | **GPIO 8** | Status LED | Onboard blue LED (active-LOW) |
 | **GPIO 3 / 4 / 5** | RGB LED | Red / Green / Blue (common cathode) |

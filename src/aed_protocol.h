@@ -20,6 +20,7 @@
 #define PTYPE_ANNOUNCE       0x01
 #define PTYPE_AED_POWER      0x09
 #define PTYPE_AED_SHOCK      0x0A
+#define PTYPE_AED_TRIGGER    0x0B   /* GPIO 6 monitor event (value: 1 = triggered) */
 
 #define AED_DEVICE_TYPE      2      /* 1 = Manikin, 2 = AED */
 

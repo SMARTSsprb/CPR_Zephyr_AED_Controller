@@ -177,9 +177,9 @@ static void handle_event(uint8_t ev)
         aed_ble_send_announce();
         break;
 
-    case EV_P1:                         /* enable power button */
-        if (s_power == AED_POWER_OFF) {
-            s_power = AED_POWER_WAIT_PRESS;
+    case EV_P1:                         /* App turns power ON directly (Option 2) */
+        if (s_power != AED_POWER_ON) {
+            s_power = AED_POWER_ON;
             apply_led();
         }
         publish_power(true);
@@ -209,21 +209,9 @@ static void handle_event(uint8_t ev)
         publish_shock(true);
         break;
 
-    case EV_PWR_PRESS:                  /* user presses the power button */
-        if (!aed_ble_is_connected()) {
-            break;
-        }
-        if (s_power == AED_POWER_WAIT_PRESS) {
-            s_power = AED_POWER_ON;
-            LOG_INF("Power button pressed: power ON (yellow)");
-            apply_led();
-            publish_power(false);
-        } else if (s_power == AED_POWER_ON && s_shock != AED_SHOCK_IN_PROGRESS) {
-            LOG_INF("Power button pressed: power OFF");
-            all_off(true);
-        } else {
-            LOG_INF("Power button ignored (power=%u shock=%u)", s_power, s_shock);
-        }
+    case EV_PWR_PRESS:                  /* GPIO 6 triggered: Monitor Only (inform, do not reset) */
+        LOG_INF("GPIO 6 triggered [MONITOR EVENT] - state retained (power=%u shock=%u)", s_power, s_shock);
+        aed_ble_send_event(PTYPE_AED_TRIGGER, 1);
         break;
 
     case EV_SHOCK_PRESS:                /* user presses the shock button */

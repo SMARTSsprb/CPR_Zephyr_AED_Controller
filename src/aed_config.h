@@ -40,7 +40,7 @@
  * Red: GPIO 3 | Green: GPIO 4 | Blue: GPIO 5 | Sync: GPIO 7 | Shock: GPIO 9
  * ============================================================================= */
 #define HAL_PIN_SHOCK_BUTTON     9   /* Active-LOW Shock Button (Onboard BOOT or External) */
-#define HAL_PIN_POWER_BUTTON     6   /* Optional GPIO 6 logic power pin (if not using Option 1) */
+#define HAL_PIN_POWER_BUTTON     6   /* GPIO 6 logic monitor pin (Passive monitor: reports events, does not reset state) */
 #define HAL_PIN_STATUS_LED       8   /* Active-LOW Status LED (Onboard Blue LED) */
 #define HAL_PIN_SYNC_OUT         7   /* Hardware Trigger Pulse Line to Manikin (1ms sync) */
 
