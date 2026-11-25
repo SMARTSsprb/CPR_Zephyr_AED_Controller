@@ -354,8 +354,19 @@ static void auth_cancel(struct bt_conn *conn)
     LOG_WRN("[AED BLE] Pairing cancelled");
 }
 
+#if defined(CONFIG_BT_APP_PASSKEY)
+static uint32_t auth_app_passkey(struct bt_conn *conn)
+{
+    ARG_UNUSED(conn);
+    return (uint32_t)AED_BLE_PASSKEY;
+}
+#endif
+
 static struct bt_conn_auth_cb s_auth_cb = {
     .passkey_display = auth_passkey_display,
+#if defined(CONFIG_BT_APP_PASSKEY)
+    .app_passkey     = auth_app_passkey,
+#endif
     .cancel          = auth_cancel,
 };
 
@@ -401,12 +412,6 @@ int aed_ble_init(aed_ble_cmd_cb_t cmd_cb,
     err = bt_enable(NULL);
     if (err) {
         LOG_ERR("[AED BLE] bt_enable failed (err %d)", err);
-        return err;
-    }
-
-    err = bt_passkey_set(AED_BLE_PASSKEY);
-    if (err) {
-        LOG_ERR("[AED BLE] bt_passkey_set failed (err %d)", err);
         return err;
     }
 
