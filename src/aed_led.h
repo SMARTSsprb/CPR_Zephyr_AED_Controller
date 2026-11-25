@@ -35,6 +35,8 @@ typedef enum {
 #define AED_LED_MODE_CONNECTED          AED_LED_MODE_PEER_ACTIVE
 #define AED_LED_MODE_SHOCK_INSTRUCTION  AED_LED_MODE_SHOCK_ON_ALERT
 #define AED_LED_MODE_SHOCK_OFF_PULSE    AED_LED_MODE_SHOCK_OFF_LATCH
+/* Solid yellow: AED power is on / shock button ready (also used by shock stage 1) */
+#define AED_LED_MODE_POWER_READY        AED_LED_MODE_SHOCK_ON_ALERT
 
 int aed_led_init(void);
 

@@ -47,20 +47,21 @@ static void shock_btn_interrupt_handler(const struct device *dev, struct gpio_ca
     ARG_UNUSED(cb);
     ARG_UNUSED(pins);
 
+    /* Debounce only. Whether a press is allowed is decided by the AED state
+     * machine in main.c (shock button works only in the "waiting for press" state). */
     int64_t now = k_uptime_get();
-    if ((now - s_last_shock_ms) < TIMING_SHOCK_COOLDOWN_MS) {
-        return; /* Safety cooldown lockout */
+    if ((now - s_last_shock_ms) < TIMING_BTN_DEBOUNCE_MS) {
+        return;
     }
 
     s_last_shock_ms = now;
-    LOG_INF(">>> AED SHOCK BUTTON PRESSED (GPIO 9)! Initiating Shock Flow... <<<");
 
     if (s_shock_cb) {
         s_shock_cb();
     }
 }
 
-/* Power ON/OFF Latching Switch Interrupt Handler */
+/* Power button (momentary) Interrupt Handler - press edge only */
 static void power_btn_interrupt_handler(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
     ARG_UNUSED(dev);
@@ -68,16 +69,14 @@ static void power_btn_interrupt_handler(const struct device *dev, struct gpio_ca
     ARG_UNUSED(pins);
 
     int64_t now = k_uptime_get();
-    if ((now - s_last_power_ms) < 50) {
-        return; /* Debounce 50ms */
+    if ((now - s_last_power_ms) < TIMING_BTN_DEBOUNCE_MS) {
+        return;
     }
 
     s_last_power_ms = now;
-    bool is_on = aed_power_switch_is_on();
-    LOG_INF(">>> AED LATCHING POWER SWITCH STATE: %s <<<", is_on ? "ON (CLOSED TO GND)" : "OFF (OPEN)");
 
     if (s_power_cb) {
-        s_power_cb(is_on);
+        s_power_cb();
     }
 }
 
@@ -137,26 +136,26 @@ int aed_button_init(aed_shock_btn_cb_t shock_cb, aed_power_btn_cb_t power_cb)
             return ret;
         }
 
-        ret = gpio_pin_interrupt_configure_dt(&s_power_btn_spec, GPIO_INT_EDGE_BOTH);
+        ret = gpio_pin_interrupt_configure_dt(&s_power_btn_spec, GPIO_INT_EDGE_TO_ACTIVE);
         if (ret < 0) {
-            LOG_ERR("Failed to configure power switch interrupt DT (err %d)", ret);
+            LOG_ERR("Failed to configure power button interrupt DT (err %d)", ret);
             return ret;
         }
 
         gpio_init_callback(&s_power_cb_data, power_btn_interrupt_handler, BIT(s_power_btn_spec.pin));
         gpio_add_callback(s_power_btn_spec.port, &s_power_cb_data);
-        LOG_INF("Power latching switch configured on DT pin %d (Both Edges)", s_power_btn_spec.pin);
+        LOG_INF("Power button configured on DT pin %d (press edge)", s_power_btn_spec.pin);
     } else {
         if (!s_gpio_dev) {
             s_gpio_dev = DEVICE_DT_GET(DT_NODELABEL(gpio0));
         }
         if (s_gpio_dev && device_is_ready(s_gpio_dev)) {
             gpio_pin_configure(s_gpio_dev, HAL_PIN_POWER_BUTTON, GPIO_INPUT | GPIO_PULL_UP);
-            gpio_pin_interrupt_configure(s_gpio_dev, HAL_PIN_POWER_BUTTON, GPIO_INT_EDGE_BOTH);
+            gpio_pin_interrupt_configure(s_gpio_dev, HAL_PIN_POWER_BUTTON, GPIO_INT_EDGE_FALLING);
 
             gpio_init_callback(&s_power_cb_data, power_btn_interrupt_handler, BIT(HAL_PIN_POWER_BUTTON));
             gpio_add_callback(s_gpio_dev, &s_power_cb_data);
-            LOG_INF("Power latching switch configured on fallback GPIO %d (Both Edges)", HAL_PIN_POWER_BUTTON);
+            LOG_INF("Power button configured on fallback GPIO %d (press edge)", HAL_PIN_POWER_BUTTON);
         }
     }
 

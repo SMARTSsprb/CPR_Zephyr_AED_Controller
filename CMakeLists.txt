@@ -1,6 +1,6 @@
 # CMakeLists.txt — Zephyr RTOS Build Configuration
 # CPR External AED Shock Controller (ESP32-C3)
-# Protocol: BLE Peripheral only (Manikin connects to AED; App reads advertisements)
+# Protocol: BLE Peripheral (the mobile App connects directly to the AED)
 
 cmake_minimum_required(VERSION 3.20.0)
 

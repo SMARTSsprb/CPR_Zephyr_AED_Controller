@@ -14,8 +14,9 @@
 extern "C" {
 #endif
 
-typedef void (*aed_shock_btn_cb_t)(void);
-typedef void (*aed_power_btn_cb_t)(bool is_switch_on);
+/* Both callbacks run in interrupt context: only post an event, do not block. */
+typedef void (*aed_shock_btn_cb_t)(void);   /* shock button pressed */
+typedef void (*aed_power_btn_cb_t)(void);   /* power button pressed */
 
 int aed_button_init(aed_shock_btn_cb_t shock_cb, aed_power_btn_cb_t power_cb);
 

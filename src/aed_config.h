@@ -2,9 +2,11 @@
  * @file    aed_config.h
  * @brief   System & Hardware Configuration for External AED Shock Unit (Zephyr RTOS)
  * @version 3.0.0
- * @note    Protocol: BLE PERIPHERAL ONLY
- *          AED advertises as "AED_001". Manikin (Central) connects and sends SHOCK_ON/OFF.
- *          Application (mobile) only reads BLE advertisements — no pairing with App.
+ * @note    Protocol: BLE PERIPHERAL
+ *          AED advertises as "AED_001". The mobile App (central) connects directly,
+ *          pairs with a passkey and controls the AED with short commands
+ *          (C ?  P0 P1  S0 S1). The AED notifies power / shock events to the App.
+ *          The Manikin is a separate device, also connected to the App.
  */
 
 #pragma once
@@ -26,12 +28,12 @@
 #define AED_BLE_MFG_COMPANY_ID   0xC9C4             /* SMARTS manufacturer ID (little-endian) */
 
 /* Manufacturer data state codes embedded in advertisement */
-#define AED_BLE_STATE_AVAILABLE  0x00   /* Idle — waiting for Manikin to connect */
-#define AED_BLE_STATE_PAIRED     0x01   /* Manikin connected */
-#define AED_BLE_STATE_SHOCK      0x02   /* Shock sequence in progress */
+#define AED_BLE_STATE_AVAILABLE  0x00   /* Idle - waiting for the App */
+#define AED_BLE_STATE_CONNECTED  0x01   /* App connected */
 
-/* Manikin BLE MAC (informational reference — Manikin initiates connection to AED) */
-#define AED_MANIKIN_BLE_MAC      "E8:3D:C1:82:1B:F2"
+/* Fixed 6-digit pairing passkey (the App user types it when pairing).
+ * CHANGE PER UNIT before shipping and print it on the unit label. */
+#define AED_BLE_PASSKEY          123456
 
 /* =============================================================================
  * HARDWARE GPIO ASSIGNMENTS (ESP32-C3 Super Mini)
@@ -67,7 +69,6 @@
  * TIMING & OPERATIONAL CONSTANTS (Milliseconds)
  * ============================================================================= */
 #define TIMING_BTN_DEBOUNCE_MS       50    /* Button debounce time */
-#define TIMING_SHOCK_COOLDOWN_MS     11000 /* 11s safety lockout (entire sequence + guard) */
 #define TIMING_SYNC_PULSE_MS         1     /* Hardware sync pulse duration (1 ms) */
 
 /* MODE 01: WAITING FOR PEER / STANDBY (Deep Blue Breathing: 3.0s organic cycle, 150 steps @ 20ms) */
